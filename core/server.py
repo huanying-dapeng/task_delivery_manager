@@ -26,6 +26,7 @@ class Massage(Structure):
         ('cmd', c_char * 1024)
     ]
 
+
     # def __str__(self):
     #     return self.name
 
