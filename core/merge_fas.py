@@ -17,4 +17,8 @@ def merge(res_list):
 
 
 if __file__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f', '--file', help='merge files list')
+
     merge([])
