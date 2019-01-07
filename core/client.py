@@ -6,3 +6,8 @@
 @author  : zhipeng.zhao
 @contact : 757049042@qq.com
 """
+
+
+class Clint(object):
+    def __init__(self):
+        print(self.__dict__)
