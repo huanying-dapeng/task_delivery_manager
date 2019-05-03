@@ -6,44 +6,41 @@
 @author  : zhipeng.zhao
 @contact : 757049042@qq.com
 """
-import os
-import threading
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from ctypes import Structure, c_char, c_double, c_int
-from multiprocessing import Array, Manager, Process
-from multiprocessing.managers import BaseManager
-from threading import BoundedSemaphore, RLock
+from threading import Lock
 
-WINDOWS = os.name == "nt"
-Lock = RLock if WINDOWS else BoundedSemaphore(1)
+import zerorpc
+
+from conf.settings import SERVER_PORT
 
 
-class Massage(Structure):
-    _fields_ = [('name', c_char * 1024), ('cpu', c_int), ('mem', c_double),
-                ('cmd', c_char * 1024)]
+class Server(object):
+    __LOCK__ = Lock()
 
+    def __init__(self, bind_obj):
+        self.__port = SERVER_PORT
+        self.__bind_obj = bind_obj
+        self.__server = None
 
-class TasksManager(Process):
-    def __init__(self):
-        super(TasksManager, self).__init__()
-        self.receive = Array(Massage, 200)
-        self.receive[0] = Massage(b"a", 2, 2.3, b"aldkf;alsdkflaksdfla")
+    def __enter__(self):
+        if self.__server is None:
+            with self.__LOCK__:
+                if self.__server is None:
+                    self.__server = zerorpc.Server(self.__bind_obj)
+                    self.__server.bind('tcp://0.0.0.0:%s' % self.__port)
+        self.__server.run()
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.__server.close()
 
-class MainSerser(object):
-    __obj = None
-    __lock__ = Lock()
-
-    def __init__(self):
-        self.__task_manager = TasksManager()
-
-    def __new__(cls, *args, **kwargs):
-        if cls.__obj is None:
-            with cls.__lock__:
-                if cls.__obj is None:
-                    cls.__obj = super().__new__(cls)
-        return cls.__obj
+    def close(self):
+        self.__server.close()
 
 
 if __name__ == '__main__':
-    TasksManager()
+    class T:
+        def add_msg(self, data):
+            print(data)
+            return True
+    server = Server(T(), 8888)
+    with server:
+        pass
