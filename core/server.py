@@ -34,6 +34,7 @@ class Server(Greenlet):
         if self.__server is None:
             self.__conn()
         # self.__server.run()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
@@ -54,6 +55,23 @@ class Server(Greenlet):
         return 'tcp://%s:%s' % (SERVER_HOST, SERVER_PORT)
 
 
+class ServerWorker(object):
+    def __init__(self, master):
+        self.master = master
+
+    def add_msg(self, data):
+        worker_id = data['id']
+        status = data['status']
+        info = data['info']
+        self.master.logger.debug('worker_id: %s, status: %s, info: %s' % (worker_id, status, str(info)))
+        if status in ('end', 'error'):
+            self.master[worker_id].status = status
+            self.master[worker_id].is_end = True
+        elif status == 'running':
+            self.master[worker_id].is_running = True
+
+        if all([bool(agent) for agent in self.master.values()]):
+            self.master.
 
 if __name__ == '__main__':
     class T:
