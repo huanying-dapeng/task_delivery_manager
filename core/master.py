@@ -11,12 +11,10 @@ import os
 import re
 from collections import defaultdict
 
-import gevent
+from gevent import Greenlet, event, joinall, sleep
 
 from conf.settings import BIN_DIR
 from core.params_parser import ParamsParser
-from gevent import Greenlet, event, lock, spawn, joinall, getcurrent
-
 from core.server import Server, ServerWorker
 from .main_log import TaskLogger
 
@@ -44,11 +42,12 @@ class Master(dict):
                 relys = [i.strip() for i in relys.strip().split(',') if i]
                 tmp_dic[name].extend(relys)
             for k, vs in tmp_dic.items():
+                async_result = event.AsyncResult()
                 k_agent = self[k]
                 vs_agents = [self[i] for i in vs]
-                k_agent.add_relys(*vs_agents)
+                k_agent.add_relys(async_result)
                 for v_agent in vs_agents:
-                    v_agent.add_relied(k_agent)
+                    v_agent.add_relied(async_result)
 
     def stop(self):
         self.server.close()
@@ -206,7 +205,7 @@ class PBS(object):
         text = output.read()
         if re.match(r'Maximum number', text):
             self.logger.warn("Reach maximum number, retry in 30 second!")
-            gevent.sleep(30)
+            sleep(30)
             self.submit()
         else:
             m = re.search(r'(\d+)\..*', text)
