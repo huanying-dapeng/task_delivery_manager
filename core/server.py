@@ -71,7 +71,7 @@ class ServerWorker(object):
             self.master[worker_id].is_running = True
 
         if all([bool(agent) for agent in self.master.values()]):
-            self.master.
+            self.master.stop()
 
 if __name__ == '__main__':
     class T:
