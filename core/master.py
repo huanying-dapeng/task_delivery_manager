@@ -13,7 +13,7 @@ from collections import defaultdict
 
 from gevent import Greenlet, event, joinall, sleep
 
-from conf.settings import BIN_DIR
+from conf.settings import BIN_DIR, SERVER_PORT, SERVER_HOST
 from core.params_parser import ParamsParser
 from core.server import Server, ServerWorker
 from .main_log import TaskLogger
@@ -26,6 +26,7 @@ class Master(dict):
         self.logger = TaskLogger(self._params_obj.out_dir, 'MAIN-SERVER').get_logger('Master')
         self._work_dir = self._params_obj.out_dir
         self.server = None
+        self.endpoint = 'tcp://{}:{:.0f}'.format(SERVER_HOST, SERVER_PORT)
 
     @property
     def work_dir(self):
@@ -151,6 +152,10 @@ class Agent(Greenlet):
     def status(self, value):
         self.__status = value
 
+    @property
+    def cmd(self):
+        return self.__cmd
+
     def __bool__(self):
         return self.is_end
 
@@ -184,7 +189,7 @@ class PBS(object):
             f.write("#PBS -o %s" % self.agent.name + '.o')
             f.write("#PBS -d %s\n" % self.agent.master.work_dir)
             f.write("cd %s\n\n" % self.agent.master.work_dir)
-            f.write("%s %s\n" % (script, self.agent.name))
+            f.write("%s -i %s -e %s -c %s\n" % (script, self.agent.name, self.agent.master.endpoint, self.agent.cmd))
 
         return file_path
 
@@ -215,7 +220,7 @@ class PBS(object):
                 return self.id
             else:
                 self.logger.warn("PBS error:%s, retry in 30 second!\n" % output)
-                gevent.sleep(30)
+                sleep(30)
                 self.submit()
 
     def delete(self):
