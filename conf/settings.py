@@ -10,3 +10,5 @@ from core.common_tools import *
 
 SERVER_HOST = get_host()
 SERVER_PORT = get_port(8888)
+
+BIN_DIR = None
