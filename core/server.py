@@ -9,31 +9,50 @@
 from threading import Lock
 
 import zerorpc
+from gevent import Greenlet, sleep
 
-from conf.settings import SERVER_PORT
+from conf.settings import SERVER_PORT, SERVER_HOST
 
 
-class Server(object):
+class Server(Greenlet):
     __LOCK__ = Lock()
 
     def __init__(self, bind_obj):
+        super(Server, self).__init__()
         self.__port = SERVER_PORT
         self.__bind_obj = bind_obj
         self.__server = None
 
-    def __enter__(self):
+    def __conn(self):
         if self.__server is None:
             with self.__LOCK__:
                 if self.__server is None:
                     self.__server = zerorpc.Server(self.__bind_obj)
                     self.__server.bind('tcp://0.0.0.0:%s' % self.__port)
-        self.__server.run()
+
+    def __enter__(self):
+        if self.__server is None:
+            self.__conn()
+        # self.__server.run()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.__server.close()
+        self.close()
 
     def close(self):
-        self.__server.close()
+        if self.__server is not None:
+            self.__server.close()
+            self.__server = None
+
+    def _run(self):
+        super()._run()
+        if self.__server is None:
+            self.__conn()
+        self.__server.run()
+
+    @property
+    def endpoint(self):
+        return 'tcp://%s:%s' % (SERVER_HOST, SERVER_PORT)
+
 
 
 if __name__ == '__main__':
@@ -41,6 +60,9 @@ if __name__ == '__main__':
         def add_msg(self, data):
             print(data)
             return True
-    server = Server(T(), 8888)
+    server = Server(T())
+
     with server:
-        pass
+        print(server.endpoint)
+        server.start()
+    server.join()
