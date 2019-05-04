@@ -9,9 +9,13 @@
 import os
 import re
 
+import gevent
+
 from conf.settings import BIN_DIR
 from core.params_parser import ParamsParser
 from gevent import Greenlet, event, lock, spawn, joinall, getcurrent
+
+from .main_log import TaskLogger
 
 
 class Master(object):
@@ -100,17 +104,19 @@ class Agent(Greenlet):
 
 class PBS(object):
     """
-        openPBS任务调度系统,
-        用于生产和管理PBS任务
-        """
+        openPBS,
+    """
 
     def __init__(self, agent: Agent):
         self.agent = agent
+        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
         self.work_dir = self.agent.master.work_dir
+        self.__submit_times = 0
+        self.__pbs_file = None
 
     def create_file(self):
         """
-        生成PBS脚本用于投递
+        create PBS task file
 
         :return:
         """
@@ -131,31 +137,37 @@ class PBS(object):
 
     def submit(self):
         """
-        提交PBS任务,并返回Jobid
+        submit PBS task
 
         :return: jobid
         """
-        super(PBS, self).submit()
-        pbs_file = self.create_file()
-        output = os.popen('ssh -o GSSAPIAuthentication=no %s "/opt/torque/bin/qsub %s"' % (self.master_ip, pbs_file))
+        if self.__pbs_file is None:
+            self.__pbs_file = self.create_file()
+        if self.__submit_times == 11:
+            self.logger.error('PBS: %s -- delivery failed')
+            return False
+
+        output = os.popen('qsub %s' % self.__pbs_file)
+        self.__submit_times += 1
         text = output.read()
         if re.match(r'Maximum number', text):
-            self.agent.logger.warn("到达最大任务书，30秒后尝试再次投递!")
+            self.logger.warn("Reach maximum number, retry in 30 second!")
             gevent.sleep(30)
             self.submit()
         else:
             m = re.search(r'(\d+)\..*', text)
             if m:
                 self.id = m.group(1)
+                self.logger.debug('%s PBS job id: %s' % (self.agent.worker_id, self.id))
                 return self.id
             else:
-                self.agent.logger.warn("任务投递系统出现错误:%s，30秒后尝试再次投递!\n" % output)
+                self.logger.warn("PBS error:%s, retry in 30 second!\n" % output)
                 gevent.sleep(30)
                 self.submit()
 
     def delete(self):
         """
-        删除当前任务
+        del current task
 
         :return: None
         """
@@ -165,9 +177,9 @@ class PBS(object):
 
     def check_state(self):
         """
-        检测任务状态
+        check current task status
 
-        :return: string 返回任务状态代码 如果任务不存在 则返回False
+        :return: string status code [Q, R, ...] or False
         """
         output = os.popen('qstat -f %s' % self.id)
         text = output.read()
@@ -178,8 +190,11 @@ class PBS(object):
             return False
 
 
-class CMDManager(object):
-    pass
+class CMDManager(PBS):
+
+    @property
+    def job_id(self):
+        return self.id
 
 
 
