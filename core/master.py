@@ -8,22 +8,24 @@
 """
 import csv
 import os
-import re
-import sys
+import time
 from collections import defaultdict
 
 from gevent import Greenlet, event, joinall, sleep
 
 from conf.settings import (
-    BIN_DIR, SERVER_PORT, SERVER_HOST, CLUSTER_NAME, PBS_TASK_DEMO, PBS_QUEUE_NAME
+    SERVER_PORT, SERVER_HOST, CLUSTER_NAME, INTERVAL_TIME, SUPER_ABNORMAL_INTERVAL
 )
+from core import job_schedule
 from core.params_parser import ParamsParser
 from core.server import Server, ServerWorker
 from .main_log import TaskLogger
-from core import job_schedule
 
 
 class Master(dict):
+    """
+    task management and scheduling
+    """
     def __init__(self, params_obj: ParamsParser):
         super(Master, self).__init__()
         self._params_obj = params_obj
@@ -70,16 +72,25 @@ class Master(dict):
         self.parser_params()
         self.logger.info('complete conf file parse')
         agents = self.values()
-        _ = [agent.start() for agent in agents]
+        # start all agent
         self.logger.info('start all workers')
+        _ = [agent.start() for agent in agents]
+        self.logger.info('start Agent Monitor')
+        monitor = AgentMonitor(self)
         joinall(agents)
         for agent in agents:
             agent.get_end_signal()
+        monitor.is_end = True
         self.logger.info('all workers were completed')
         self.logger.info('stop workflow: [PID %s]' % self.main_process)
 
 
 class Agent(Greenlet):
+    """
+    the agent of remote worker in server
+        1. keep the markers of time and status
+        2. submit task
+    """
     def __init__(self, worker_id, cmd, master: Master, cpu=2, mem='5G'):
         super(Agent, self).__init__()
         self.master = master
@@ -96,6 +107,9 @@ class Agent(Greenlet):
         self.__cpu = cpu
         self.__men = mem
         self.cmd_obj = None
+        self.__create_time = int(time.time())  # unit: S
+        self.__start_run_time = None
+        self.last_recv_time = None
         self.__end_signal = event.AsyncResult()
 
     def _type_check(self, *w_events):
@@ -113,6 +127,10 @@ class Agent(Greenlet):
         self._relied_workers.update(w_events)
 
     def _run(self):
+        """rewrite the method of Greenlet which will be called when the start method is invoked
+
+        :return: None
+        """
         super(Agent, self)._run()
         self.is_start = True
         task_id = None
@@ -126,6 +144,7 @@ class Agent(Greenlet):
             self.is_end = True
         else:
             self.__task_id = task_id
+        self.__start_run_time = int(time.time())
 
     def get_resource(self):
         return self.__cpu, self.__men
@@ -135,11 +154,26 @@ class Agent(Greenlet):
         return self.__worker_id
 
     @property
+    def create_time(self):
+        return self.__create_time
+
+    @property
+    def start_time(self):
+        return self.__start_run_time
+
+    @property
     def is_start(self):
         return self.__is_start
 
     @is_start.setter
     def is_start(self, value):
+        """
+        1. block until all relying workers are completed successfully
+        2. our worker start to run
+
+        :param value: bool
+        :return:
+        """
         assert isinstance(value, bool), 'value of is_start must be bool'
         for i in self._relying_workers:
             v = i.get()
@@ -166,7 +200,14 @@ class Agent(Greenlet):
 
     @is_end.setter
     def is_end(self, value):
+        """set the end of worker and send start or stop signal to the relied workers
+
+        :param value: bool
+        :return:
+        """
         assert isinstance(value, bool), 'value of is_running must be bool'
+        # 1: represent this work is completed successfully
+        # 0: represent this work is failed, and stop the relied works
         msg = 1 if self.__status == 'end' else 0
         if value is True:
             _ = [i.set(msg) for i in self._relied_workers]
@@ -199,11 +240,62 @@ class Agent(Greenlet):
     def get_end_signal(self):
         return self.__end_signal.get(block=True)
 
-class CMDManager(getattr(job_schedule, CLUSTER_NAME)):
 
+class CMDManager(getattr(job_schedule, CLUSTER_NAME)):
+    """manager of job scheduling system's tasks
+        Dynamically bind the parent class through reflection
+    """
     @property
     def job_id(self):
         return self.id
+
+
+class AgentMonitor(Greenlet):
+    def __init__(self, master: Master):
+        super(AgentMonitor, self).__init__()
+        self._master = master
+        self.__logger = TaskLogger(self._master.work_dir, 'MAIN-SERVER').get_logger('Agent-Monitor')
+        self.is_end = False
+
+    def monitor(self):
+        now_time = int(time.time())
+        agents = self._master.values()
+        for agent in agents:
+            start_time = agent.start_time
+            last_recv_time = agent.last_recv_time
+
+            if start_time is None and last_recv_time is None:
+                # solve the task which was not submitted 10 days later
+                if (now_time - agent.create_time) > SUPER_ABNORMAL_INTERVAL:
+                    agent.status = 'error'
+                    agent.is_end = True
+                continue
+            elif last_recv_time is None:
+                interval_time = now_time - start_time
+            else:
+                interval_time = now_time - last_recv_time
+
+            # solve the submitted task which was received any information from the remote worker
+            if interval_time > (INTERVAL_TIME * 10):
+                status = agent.cmd_obj.check_state()
+                set_end = False
+                if status is False:  # the task has stopped but not receive end info
+                    set_end = True
+                else:
+                    if interval_time > (INTERVAL_TIME * 20):
+                        agent.cmd_obj.delete()
+                        set_end = True
+                if set_end:
+                    agent.status = 'error'
+                    agent.is_end = True
+
+    def _run(self):
+        sleep(3)
+        while True:
+            sleep(INTERVAL_TIME)
+            self.monitor()
+            if self.is_end:
+                break
 
 
 if __name__ == '__main__':

@@ -11,6 +11,9 @@ from core.common_tools import *
 SERVER_HOST = get_host()
 SERVER_PORT = get_port(8888)
 
+INTERVAL_TIME = 15  # unit: second
+SUPER_ABNORMAL_INTERVAL = 60 * 60 * 24 * 10  # Super abnormal time: 10 days
+
 BIN_DIR = None
 
 CLUSTER_NAME = 'NOHUP'  # PBS or SLURM or NOHUP

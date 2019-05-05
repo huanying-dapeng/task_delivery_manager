@@ -6,6 +6,7 @@
 @author  : zhipeng.zhao
 @contact : 757049042@qq.com
 """
+import time
 from threading import Lock
 
 import zerorpc
@@ -64,13 +65,14 @@ class ServerWorker(object):
         status = data['status']
         info = data['info']
         self.master.logger.debug('worker_id: %s, status: %s, info: %s' % (worker_id, status, str(info)))
+        agent = self.master[worker_id]
         if status in ('end', 'error'):
-            self.master[worker_id].status = status
-            self.master[worker_id].is_end = True
-            self.master[worker_id].set_end_signal()
+            agent.status = status
+            agent.is_end = True
+            agent.set_end_signal()
         elif status == 'running':
-            self.master[worker_id].is_running = True
-
+            agent.is_running = True
+        agent.last_recv_time = int(time.time())
 
 if __name__ == '__main__':
     class T:
