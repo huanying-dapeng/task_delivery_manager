@@ -9,14 +9,18 @@
 import csv
 import os
 import re
+import sys
 from collections import defaultdict
 
 from gevent import Greenlet, event, joinall, sleep
 
-from conf.settings import BIN_DIR, SERVER_PORT, SERVER_HOST
+from conf.settings import (
+    BIN_DIR, SERVER_PORT, SERVER_HOST, CLUSTER_NAME, PBS_TASK_DEMO, PBS_QUEUE_NAME
+)
 from core.params_parser import ParamsParser
 from core.server import Server, ServerWorker
 from .main_log import TaskLogger
+from core import job_schedule
 
 
 class Master(dict):
@@ -27,6 +31,7 @@ class Master(dict):
         self._work_dir = self._params_obj.out_dir
         self.server = None
         self.endpoint = 'tcp://{}:{:.0f}'.format(SERVER_HOST, SERVER_PORT)
+        self.main_process = os.getpid()
 
     @property
     def work_dir(self):
@@ -35,7 +40,7 @@ class Master(dict):
     def parser_params(self):
         tmp_dic = defaultdict(list)
         with open(self._params_obj.cmd_conf) as in_handler:
-            for name, cmd, cpu, mem, relys in csv.reader(in_handler, delimiter='\t'):
+            for name, cpu, mem, relys, cmd in csv.reader(in_handler, delimiter='\t'):
                 if name in self:
                     self.logger.error('the cmd name must not be repeated [%s is repeated]' % name)
                     raise KeyError('the cmd name must not be repeated [%s is repeated]' % name)
@@ -43,6 +48,8 @@ class Master(dict):
                 relys = [i.strip() for i in relys.strip().split(',') if i]
                 tmp_dic[name].extend(relys)
             for k, vs in tmp_dic.items():
+                if len(vs) == 0:
+                    continue
                 async_result = event.AsyncResult()
                 k_agent = self[k]
                 vs_agents = [self[i] for i in vs]
@@ -54,11 +61,22 @@ class Master(dict):
         self.server.close()
 
     def run(self):
+
+        self.logger.info('start workflow: [PID %s]' % self.main_process)
         self.server = Server(bind_obj=ServerWorker(self))
+        self.logger.info('start Server')
         self.server.start()
+        self.logger.info('start to parse conf file')
+        self.parser_params()
+        self.logger.info('complete conf file parse')
         agents = self.values()
         _ = [agent.start() for agent in agents]
-        joinall([self.server, *agents])
+        self.logger.info('start all workers')
+        joinall(agents)
+        for agent in agents:
+            agent.get_end_signal()
+        self.logger.info('all workers were completed')
+        self.logger.info('stop workflow: [PID %s]' % self.main_process)
 
 
 class Agent(Greenlet):
@@ -72,11 +90,13 @@ class Agent(Greenlet):
         self.__is_start = False
         self.__status = 'wait'
         self.__worker_id = worker_id
+        self.__task_id = None
         self.__cmd = cmd
         self.name = self.worker_id
         self.__cpu = cpu
         self.__men = mem
         self.cmd_obj = None
+        self.__end_signal = event.AsyncResult()
 
     def _type_check(self, *w_events):
         for w_event in w_events:
@@ -99,9 +119,13 @@ class Agent(Greenlet):
         if self.is_start is True:
             self.cmd_obj = CMDManager(self)
             task_id = self.cmd_obj.submit()
+            self.master.logger.debug(
+                'Task: %s has submitted successfully, ID: %s, Task Type: %s' % (self.name, task_id, CLUSTER_NAME))
         if task_id is None:
             self.status = 'error'
             self.is_end = True
+        else:
+            self.__task_id = task_id
 
     def get_resource(self):
         return self.__cpu, self.__men
@@ -121,6 +145,10 @@ class Agent(Greenlet):
             v = i.get()
             if v != 1:
                 value = False
+        if value is True:
+            self.master.logger.debug('start submit %s task' % self.worker_id)
+        else:
+            self.master.logger.debug('%s receive error, and it will stop running')
         self.__is_start = value
 
     @property
@@ -142,6 +170,8 @@ class Agent(Greenlet):
         msg = 1 if self.__status == 'end' else 0
         if value is True:
             _ = [i.set(msg) for i in self._relied_workers]
+
+        self.master.logger.debug('%s has finished' % self.worker_id)
         self.__is_end = value
 
     @property
@@ -156,104 +186,24 @@ class Agent(Greenlet):
     def cmd(self):
         return self.__cmd
 
+    @property
+    def task_id(self):
+        return self.__task_id
+
     def __bool__(self):
         return self.is_end
 
+    def set_end_signal(self):
+        self.__end_signal.set(1)
 
-class PBS(object):
-    """
-        openPBS,
-    """
+    def get_end_signal(self):
+        return self.__end_signal.get(block=True)
 
-    def __init__(self, agent: Agent):
-        self.agent = agent
-        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
-        self.work_dir = self.agent.master.work_dir
-        self.__submit_times = 0
-        self.__pbs_file = None
-
-    def create_file(self):
-        """
-        create PBS task file
-
-        :return:
-        """
-        file_path = os.path.join(self.work_dir, self.agent.name + ".pbs")
-        script = os.path.join(BIN_DIR + "cmd_runner.py")
-        cpu, mem = self.agent.get_resource()
-        with open(file_path, "w") as f:
-            f.write("#PBS -N %s\n" % self.agent.name)
-            f.write("#PBS -l nodes=1:ppn=%s\n" % cpu)
-            f.write("#PBS -l mem=%s\n" % mem)
-            f.write("#PBS -e %s" % self.agent.name + '.e')
-            f.write("#PBS -o %s" % self.agent.name + '.o')
-            f.write("#PBS -d %s\n" % self.agent.master.work_dir)
-            f.write("cd %s\n\n" % self.agent.master.work_dir)
-            f.write("%s -i %s -e %s -c %s\n" % (script, self.agent.name, self.agent.master.endpoint, self.agent.cmd))
-
-        return file_path
-
-    def submit(self):
-        """
-        submit PBS task
-
-        :return: jobid
-        """
-        if self.__pbs_file is None:
-            self.__pbs_file = self.create_file()
-        if self.__submit_times == 11:
-            self.logger.error('PBS: %s -- delivery failed')
-            return None
-
-        output = os.popen('qsub %s' % self.__pbs_file)
-        self.__submit_times += 1
-        text = output.read()
-        if re.match(r'Maximum number', text):
-            self.logger.warn("Reach maximum number, retry in 30 second!")
-            sleep(30)
-            self.submit()
-        else:
-            m = re.search(r'(\d+)\..*', text)
-            if m:
-                self.id = m.group(1)
-                self.logger.debug('%s PBS job id: %s' % (self.agent.worker_id, self.id))
-                return self.id
-            else:
-                self.logger.warn("PBS error:%s, retry in 30 second!\n" % output)
-                sleep(30)
-                self.submit()
-
-    def delete(self):
-        """
-        del current task
-
-        :return: None
-        """
-
-        if self.check_state():
-            os.system('qdel -p %s' % self.id)
-
-    def check_state(self):
-        """
-        check current task status
-
-        :return: string status code [Q, R, ...] or False
-        """
-        output = os.popen('qstat -f %s' % self.id)
-        text = output.read()
-        m = re.search(r"job_state = (\w+)", text)
-        if m:
-            return m.group(1)
-        else:
-            return False
-
-
-class CMDManager(PBS):
+class CMDManager(getattr(job_schedule, CLUSTER_NAME)):
 
     @property
     def job_id(self):
         return self.id
-
 
 
 if __name__ == '__main__':
