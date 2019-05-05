@@ -67,11 +67,10 @@ class ServerWorker(object):
         if status in ('end', 'error'):
             self.master[worker_id].status = status
             self.master[worker_id].is_end = True
+            self.master[worker_id].set_end_signal()
         elif status == 'running':
             self.master[worker_id].is_running = True
 
-        if all([bool(agent) for agent in self.master.values()]):
-            self.master.stop()
 
 if __name__ == '__main__':
     class T:
