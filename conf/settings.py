@@ -12,3 +12,18 @@ SERVER_HOST = get_host()
 SERVER_PORT = get_port(8888)
 
 BIN_DIR = None
+
+CLUSTER_NAME = 'NOHUP'  # PBS or SLURM or NOHUP
+PBS_QUEUE_NAME = 'zh'
+PBS_TASK_DEMO = '''
+#PBS -N {name}
+#PBS -l nodes=1:ppn={cpu}
+#PBS -l mem={mem}
+#PBS -e {stderr}
+#PBS -o {stdout}
+#PBS -d {work_dir}
+#PBS -q {queue_name}
+cd {work_dir}
+
+{cmd}
+'''
