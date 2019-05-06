@@ -101,7 +101,7 @@ class PBS(ABSClusterManager):
         cpu, mem = self.agent.get_resource()
         with open(file_path, "w") as f:
             cmd = "python %s -i %s -e %s -c %s\n" % (
-            script, self.agent.name, self.agent.master.endpoint, self.agent.cmd)
+                script, self.agent.name, self.agent.master.endpoint, self.agent.cmd)
             content = PBS_TASK_DEMO.format(
                 name=self.agent.name,
                 cpu=cpu,
@@ -190,7 +190,7 @@ class NOHUP(ABSClusterManager):
         script = os.path.join(BIN_DIR, "cmd_runner.py")
         with open(file_path, "w") as f:
             cmd = 'python %s -i %s -e %s -c \"%s\"' % (
-            script, self.agent.name, self.agent.master.endpoint, self.agent.cmd)
+                script, self.agent.name, self.agent.master.endpoint, self.agent.cmd)
 
             content = 'nohup {cmd} > {stdout} 2> {stderr} & echo $!'.format(
                 cmd=cmd,
