@@ -26,7 +26,7 @@ class ParamsParser(object):
         self.__parser.add_argument('-o', '--out_dir', default='./{datetime}', help='output dir [default: %(default)s]')
         self.__parser.add_argument('-c', '--conf_file', required=True,
                                    help='commands info file refering to the configuration file in the test dir')
-        print(sys.argv)
+
         if len(sys.argv) < 3:
             self.__parser.parse_args(['-h'])
 
