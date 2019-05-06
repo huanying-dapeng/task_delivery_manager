@@ -8,8 +8,10 @@
 """
 import os
 import re
+from abc import ABC, abstractmethod
 
 from gevent import sleep
+from psutil import Process, NoSuchProcess, ZombieProcess, AccessDenied
 
 from conf.settings import (
     PBS_TASK_DEMO, BIN_DIR, PBS_QUEUE_NAME
@@ -17,20 +19,61 @@ from conf.settings import (
 from core.main_log import TaskLogger
 
 
-class PBS(object):
+class ABSClusterManager(ABC):
+    def __init__(self, agent):
+        self.agent = agent
+        self.work_dir = self.agent.master.work_dir
+        self.__submit_times = 0
+        self.__cmd_data = None
+        self.id = None
+        self.logger = None
+
+    @abstractmethod
+    def create_cmd(self):
+        """
+        create PBS/SLURM task file or create shell command
+        :return: file path or cmd string
+        """
+        pass
+
+    @abstractmethod
+    def submit(self):
+        """
+        submit PBS/SLURM/shell task
+
+        :return: jobid
+        """
+        pass
+
+    @abstractmethod
+    def delete(self):
+        """
+        del current task
+
+        :return: None
+        """
+        pass
+
+    @abstractmethod
+    def check_state(self):
+        """
+        check current task status
+
+        :return: string status code [Q, R, ...] / True or False
+        """
+        pass
+
+
+class PBS(ABSClusterManager):
     """
         openPBS,
     """
 
     def __init__(self, agent):
-        self.agent = agent
+        super(PBS, self).__init__(agent)
         self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
-        self.work_dir = self.agent.master.work_dir
-        self.__submit_times = 0
-        self.__pbs_file = None
-        self.id = None
 
-    def create_file(self):
+    def create_cmd(self):
         """
         create PBS task file
 
@@ -62,13 +105,13 @@ class PBS(object):
 
         :return: jobid
         """
-        if self.__pbs_file is None:
-            self.__pbs_file = self.create_file()
+        if self.__cmd_data is None:
+            self.__cmd_data = self.create_cmd()
         if self.__submit_times == 11:
             self.logger.error('PBS: %s -- delivery failed')
             return None
 
-        output = os.popen('qsub %s' % self.__pbs_file)
+        output = os.popen('qsub %s' % self.__cmd_data)
         self.__submit_times += 1
         text = output.read()
         if re.match(r'Maximum number', text):
@@ -111,18 +154,14 @@ class PBS(object):
             return False
 
 
-class NOHUP(object):
+class NOHUP(ABSClusterManager):
     """
         NOHUP task
     """
 
     def __init__(self, agent):
-        self.agent = agent
+        super(NOHUP, self).__init__(agent)
         self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
-        self.work_dir = self.agent.master.work_dir
-        self.__submit_times = 0
-        self.__nohup_cmd = None
-        self.id = None
 
     def create_cmd(self):
         """
@@ -151,10 +190,10 @@ class NOHUP(object):
 
         :return: jobid
         """
-        if self.__nohup_cmd is None:
-            self.__nohup_cmd = self.create_cmd()
+        if self.__cmd_data is None:
+            self.__cmd_data = self.create_cmd()
 
-        output = os.popen(self.__nohup_cmd)
+        output = os.popen(self.__cmd_data)
         self.__submit_times += 1
         text = output.read()
         self.agent.master.logger.debug('NOHUP Process ID:' + text.strip())
@@ -168,3 +207,21 @@ class NOHUP(object):
         :return: None
         """
         os.system('kill -9 %s' % self.id)
+
+    def check_state(self):
+        """
+        check status of current task
+
+        :return: bool
+        """
+        return_status = False
+        if self.id is not None:
+            try:
+                process = Process(self.id)
+                return_status = True
+            except NoSuchProcess:
+                pass
+            except (ZombieProcess, AccessDenied):
+                return_status = True
+
+        return return_status
