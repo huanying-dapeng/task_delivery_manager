@@ -13,6 +13,7 @@ import zerorpc
 from gevent import Greenlet, sleep
 
 from conf.settings import SERVER_PORT, SERVER_HOST
+from core.main_log import TaskLogger
 
 
 class Server(Greenlet):
@@ -33,6 +34,7 @@ class Server(Greenlet):
 
     def __enter__(self):
         if self.__server is None:
+            self.__bind_obj.logger.debug('start Server, EndPoint: %s' % self.endpoint)
             self.__conn()
         # self.__server.run()
         return self
@@ -59,12 +61,13 @@ class Server(Greenlet):
 class ServerWorker(object):
     def __init__(self, master):
         self.master = master
+        self.logger = TaskLogger(self.master.work_dir, 'MAIN-APP').get_logger('Master[Server]')
 
     def add_msg(self, data):
         worker_id = data['id']
         status = data['status']
         info = data['info']
-        self.master.logger.debug('worker_id: %s, status: %s, info: %s' % (worker_id, status, str(info)))
+        self.logger.debug('worker_id: %s, status: %s, info: %s' % (worker_id, status, str(info)))
         agent = self.master[worker_id]
         if status in ('end', 'error'):
             agent.status = status

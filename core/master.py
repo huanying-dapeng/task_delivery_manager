@@ -26,10 +26,11 @@ class Master(dict):
     """
     task management and scheduling
     """
+
     def __init__(self, params_obj: ParamsParser):
         super(Master, self).__init__()
         self._params_obj = params_obj
-        self.logger = TaskLogger(self._params_obj.out_dir, 'MAIN-SERVER').get_logger('Master')
+        self.logger = TaskLogger(self._params_obj.out_dir, 'MAIN-APP').get_logger('Master')
         self._work_dir = self._params_obj.out_dir
         self.server = None
         self.endpoint = 'tcp://{}:{:.0f}'.format(SERVER_HOST, SERVER_PORT)
@@ -63,26 +64,23 @@ class Master(dict):
         self.server.close()
 
     def run(self):
-
-        self.logger.info('start workflow: [PID %s]' % self.main_process)
+        self.logger.info('Main APP start: [PID %s]' % self.main_process)
         self.server = Server(bind_obj=ServerWorker(self))
-        self.logger.info('start Server')
+        self.logger.info('Server start')
         self.server.start()
-        self.logger.info('start to parse conf file')
         self.parser_params()
-        self.logger.info('complete conf file parse')
         agents = self.values()
         # start all agent
-        self.logger.info('start all workers')
+        self.logger.info('Worker Agent start')
         _ = [agent.start() for agent in agents]
-        self.logger.info('start Agent Monitor')
+        self.logger.info('Agent Monitor start')
         monitor = AgentMonitor(self)
         joinall(agents)
         for agent in agents:
             agent.get_end_signal()
         monitor.is_end = True
         self.logger.info('all workers were completed')
-        self.logger.info('stop workflow: [PID %s]' % self.main_process)
+        self.logger.info('Main APP stop: [PID %s]' % self.main_process)
 
 
 class Agent(Greenlet):
@@ -91,6 +89,7 @@ class Agent(Greenlet):
         1. keep the markers of time and status
         2. submit task
     """
+
     def __init__(self, worker_id, cmd, master: Master, cpu=2, mem='5G'):
         super(Agent, self).__init__()
         self.master = master
@@ -111,6 +110,7 @@ class Agent(Greenlet):
         self.__start_run_time = None
         self.last_recv_time = None
         self.__end_signal = event.AsyncResult()
+        self.logger = TaskLogger(self.master.work_dir, 'MAIN-APP').get_logger('Master[WorkerAgent]')
 
     def _type_check(self, *w_events):
         for w_event in w_events:
@@ -131,14 +131,16 @@ class Agent(Greenlet):
 
         :return: None
         """
-        super(Agent, self)._run()
         self.is_start = True
         task_id = None
         if self.is_start is True:
             self.cmd_obj = CMDManager(self)
             task_id = self.cmd_obj.submit()
-            self.master.logger.debug(
-                'Task: %s has submitted successfully, ID: %s, Task Type: %s' % (self.name, task_id, CLUSTER_NAME))
+            self.logger.debug(
+                'Task: %s, Status: submitted successfully, ID: %s, Task Type: %s' % (self.name, task_id, CLUSTER_NAME))
+            self.logger.debug(
+                'Task: %s, CMD: %s' % (self.worker_id, self.cmd))
+
         if task_id is None:
             self.status = 'error'
             self.is_end = True
@@ -180,9 +182,9 @@ class Agent(Greenlet):
             if v != 1:
                 value = False
         if value is True:
-            self.master.logger.debug('start submit %s task' % self.worker_id)
+            self.logger.debug('start submit %s task' % self.worker_id)
         else:
-            self.master.logger.debug('%s receive error, and it will stop running')
+            self.logger.debug('%s receive error, and it will stop running' % self.worker_id)
         self.__is_start = value
 
     @property
@@ -212,7 +214,7 @@ class Agent(Greenlet):
         if value is True:
             _ = [i.set(msg) for i in self._relied_workers]
 
-        self.master.logger.debug('%s has finished' % self.worker_id)
+        self.logger.debug('%s has finished' % self.worker_id)
         self.__is_end = value
 
     @property
@@ -245,6 +247,7 @@ class CMDManager(getattr(job_schedule, CLUSTER_NAME)):
     """manager of job scheduling system's tasks
         Dynamically bind the parent class through reflection
     """
+
     @property
     def job_id(self):
         return self.id
@@ -254,7 +257,7 @@ class AgentMonitor(Greenlet):
     def __init__(self, master: Master):
         super(AgentMonitor, self).__init__()
         self._master = master
-        self.__logger = TaskLogger(self._master.work_dir, 'MAIN-SERVER').get_logger('Agent-Monitor')
+        self.__logger = TaskLogger(self._master.work_dir, 'MAIN').get_logger('Master[AgentMonitor]')
         self.is_end = False
 
     def monitor(self):
@@ -266,7 +269,11 @@ class AgentMonitor(Greenlet):
 
             if start_time is None and last_recv_time is None:
                 # solve the task which was not submitted 10 days later
-                if (now_time - agent.create_time) > SUPER_ABNORMAL_INTERVAL:
+                interval_time = now_time - agent.create_time
+                if interval_time > SUPER_ABNORMAL_INTERVAL:
+                    self.__logger.debug(
+                        'detecte Worker[%s] did not run for %s hours, MainApp will stop the agent of it' % (
+                        agent.name, round(interval_time / 3600, 2)))
                     agent.status = 'error'
                     agent.is_end = True
                 continue
@@ -280,9 +287,14 @@ class AgentMonitor(Greenlet):
                 status = agent.cmd_obj.check_state()
                 set_end = False
                 if status is False:  # the task has stopped but not receive end info
+                    self.__logger.debug(
+                        'detecte Worker[%s] is not existent, MainApp will stop the agent of it' % agent.name)
                     set_end = True
                 else:
                     if interval_time > (INTERVAL_TIME * 20):
+                        self.__logger.debug('detecte WorkerAgent[%s] did not receive msg for %s minutes, '
+                                            'MainApp will stop the agent and remote worker of it' % (
+                                                agent.name, int(interval_time / 60)))
                         agent.cmd_obj.delete()
                         set_end = True
                 if set_end:

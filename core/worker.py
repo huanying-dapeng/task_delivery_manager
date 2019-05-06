@@ -6,12 +6,15 @@
 @author  : zhipeng.zhao
 @contact : 757049042@qq.com
 """
+import os
 import sys
 import time
 from subprocess import Popen
 from threading import Thread
 
 from core.client import Client
+from core.common_tools import get_hostname
+
 
 class Worker(Thread):
     """A class that represents a task of job scheduling system [PBS or SLURM].
@@ -47,12 +50,26 @@ class MSGManager(Thread):
         super(MSGManager, self).__init__()
         self.__cmd_obj = cmd_obj
         self.__client = Client(cmd_obj.endpoint, cmd_obj.worker_id)
+        self.__hostname = get_hostname()
+        self.__pid = os.getpid()
 
     def run(self):
         while True:
             with self.__client as client:
-                msg = {'used_time': round(time.time() - self.__cmd_obj.start_time, 5)}
+                msg = {
+                    'used_time': round(time.time() - self.__cmd_obj.start_time, 3),
+                    'hostname': self.hostname,
+                    'worker_pid': self.pid
+                }
                 client.send(msg, status=self.__cmd_obj.status)
             if self.__cmd_obj.status in ('end', 'error'):
                 break
             time.sleep(15)
+
+    @property
+    def hostname(self):
+        return self.__hostname
+
+    @property
+    def pid(self):
+        return self.__pid

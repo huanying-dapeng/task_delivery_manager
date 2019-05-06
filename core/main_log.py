@@ -6,58 +6,52 @@
 @author  : zhipeng.zhao
 @contact : 757049042@qq.com
 """
+import datetime
 import logging
 import os
 
-from gevent import lock, Greenlet
+from .common_tools import singleton
 
 
-class TaskLogger(Greenlet):
-    __loggers_obj = dict()
-    __LOCK__ = lock.BoundedSemaphore(1)
-
+@singleton
+class TaskLogger(object):
     def __init__(self, outdir, logger_name, stream_on=True):
-        super(TaskLogger, self).__init__()
         self.__outdir = outdir
 
         self.__level = logging.DEBUG
         self.__streem_on = stream_on
-        self.__format = '%(asctime)s    %(name)s    %(levelname)s : %(message)s'
-        self.__formatter = logging.Formatter(self.__format, "%Y-%m-%d %H:%M:%S")
 
-        self.__log_path = os.path.join(self.__outdir, "log.txt")
-        self.__file_handler = logging.FileHandler(self.__log_path)
-        self.__file_handler.setLevel(self.__level)
-        self.__file_handler.setFormatter(self.__formatter)
+        self.__logger = logging.getLogger(logger_name)
+        self.__logger.setLevel(self.__level)
+        self.__logger.propagate = 0
+        self._init_handler()
+
+    def _init_handler(self):
+        format = '%(asctime)s    %(name)s    %(levelname)s : %(message)s'
+        formatter = logging.Formatter(format, "%Y-%m-%d %H:%M:%S")
+
+        log_path = os.path.join(self.__outdir, datetime.datetime.now().strftime('%Y%m%d') + "_log.txt")
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setLevel(self.__level)
+        file_handler.setFormatter(formatter)
+        self.__logger.addHandler(file_handler)
+        self.file_handler = file_handler
 
         if self.__streem_on:
-            self.__stream_handler = logging.StreamHandler()
-            self.__stream_handler.setLevel(self.__level)
-            self.__stream_handler.setFormatter(self.__formatter)
-
-        self.__logger = None
+            stream_handler = logging.StreamHandler()
+            stream_handler.setLevel(self.__level)
+            stream_handler.setFormatter(formatter)
+            self.__logger.addHandler(stream_handler)
+            self.stream_handler = stream_handler
 
     def get_logger(self, name=""):
         """
         :param name: logger name
         """
-        self.__logger = logging.getLogger(name)
-        self.__logger.propagate = 0
-        self._add_handler(self.__logger)
-        return self.__logger
+        return self.__logger.getChild(name)
 
-    def _add_handler(self, logger):
-        logger.setLevel(self.__level)
-        logger.addHandler(self.__file_handler)
-        if self.__streem_on:
-            logger.addHandler(self.__stream_handler)
-
-    def __new__(cls, *args, **kwargs):
-        logger_name = args[1]
-        # Double-Checked Locking: to increase concurrency
-        if not cls.__loggers_obj.get(logger_name):
-            with cls.__LOCK__:
-                if not cls.__loggers_obj.get(logger_name):
-                    cls.__loggers_obj[logger_name] = super().__new__(cls)
-        return cls.__loggers_obj[logger_name]
-
+    def destroy(self):
+        if self.stream_handler and self.logger:
+            self.logger.removeHandler(self.stream_handler)
+        if self.file_handler and self.logger:
+            self.logger.removeHandler(self.file_handler)
