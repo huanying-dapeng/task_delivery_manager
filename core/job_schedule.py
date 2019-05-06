@@ -63,6 +63,23 @@ class ABSClusterManager(ABC):
         """
         pass
 
+    @property
+    def submit_times(self):
+        return self.__submit_times
+
+    @submit_times.setter
+    def submit_times(self, value):
+        assert isinstance(value, int), 'submit_times value must be int'
+        self.__submit_times = value
+
+    @property
+    def cmd_data(self):
+        return self.__cmd_data
+
+    @cmd_data.setter
+    def cmd_data(self, value):
+        self.__cmd_data = value
+
 
 class PBS(ABSClusterManager):
     """
@@ -105,14 +122,14 @@ class PBS(ABSClusterManager):
 
         :return: jobid
         """
-        if self.__cmd_data is None:
-            self.__cmd_data = self.create_cmd()
-        if self.__submit_times == 11:
+        if self.cmd_data is None:
+            self.cmd_data = self.create_cmd()
+        if self.submit_times == 11:
             self.logger.error('PBS: %s -- delivery failed')
             return None
 
-        output = os.popen('qsub %s' % self.__cmd_data)
-        self.__submit_times += 1
+        output = os.popen('qsub %s' % self.cmd_data)
+        self.submit_times += 1
         text = output.read()
         if re.match(r'Maximum number', text):
             self.logger.warn("Reach maximum number, retry in 30 second!")
@@ -190,11 +207,11 @@ class NOHUP(ABSClusterManager):
 
         :return: jobid
         """
-        if self.__cmd_data is None:
-            self.__cmd_data = self.create_cmd()
+        if self.cmd_data is None:
+            self.cmd_data = self.create_cmd()
 
-        output = os.popen(self.__cmd_data)
-        self.__submit_times += 1
+        output = os.popen(self.cmd_data)
+        self.submit_times += 1
         text = output.read()
         self.agent.master.logger.debug('NOHUP Process ID:' + text.strip())
         self.id = int(text.strip())
