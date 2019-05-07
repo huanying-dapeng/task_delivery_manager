@@ -67,21 +67,27 @@ class ServerWorker(object):
         worker_id = data['id']
         status = data['status']
         info = data['info']
-        self.logger.debug('worker_id: %s, status: %s, info: %s' % (worker_id, status, str(info)))
+        self.logger.debug(
+            'receive rpc data <-- [worker_id: %s, status: %s, info: %s]' % (worker_id, status, str(info)))
         agent = self.master[worker_id]
         if status in ('end', 'error'):
             agent.status = status
             agent.is_end = True
-            agent.set_end_signal()
         elif status == 'running':
             agent.is_running = True
+            agent.status = status
         agent.last_recv_time = int(time.time())
+        self.logger.debug('return rpc data --> [actions: %s]' % agent.status)
+        return agent.status
+
 
 if __name__ == '__main__':
     class T:
         def add_msg(self, data):
             print(data)
             return True
+
+
     server = Server(T())
 
     with server:

@@ -53,12 +53,13 @@ class Master(dict):
             for k, vs in tmp_dic.items():
                 if len(vs) == 0:
                     continue
-                async_result = event.AsyncResult()
+                # async_result = event.AsyncResult()
                 k_agent = self[k]
                 vs_agents = [self[i] for i in vs]
-                k_agent.add_relys(async_result)
-                for v_agent in vs_agents:
-                    v_agent.add_relied(async_result)
+                # k_agent.add_relys(async_result)
+                k_agent.add_relys(*vs_agents)
+                # for v_agent in vs_agents:
+                #     v_agent.add_relied(async_result)
 
     def stop(self):
         self.server.close()
@@ -114,7 +115,8 @@ class Agent(Greenlet):
 
     def _type_check(self, *w_events):
         for w_event in w_events:
-            if not isinstance(w_event, event.AsyncResult):
+            # if not isinstance(w_event, event.AsyncResult):
+            if not isinstance(w_event, Agent):
                 raise TypeError('relys must be event.AsyncResult')
         return True
 
@@ -146,6 +148,7 @@ class Agent(Greenlet):
             self.is_end = True
         else:
             self.__task_id = task_id
+            self.status = 'submitted'
         self.__start_run_time = int(time.time())
 
     def get_resource(self):
@@ -177,8 +180,9 @@ class Agent(Greenlet):
         :return:
         """
         assert isinstance(value, bool), 'value of is_start must be bool'
-        for i in self._relying_workers:
-            v = i.get()
+        for agent in self._relying_workers:
+            # v = i.get()
+            v = agent.get_end_signal()
             if v != 1:
                 value = False
         if value is True:
@@ -211,9 +215,9 @@ class Agent(Greenlet):
         # 1: represent this work is completed successfully
         # 0: represent this work is failed, and stop the relied works
         msg = 1 if self.__status == 'end' else 0
-        if value is True:
-            _ = [i.set(msg) for i in self._relied_workers]
-
+        # if value is True:
+        #     _ = [i.set(msg) for i in self._relied_workers]
+        self.__end_signal.set(msg)
         self.logger.debug('%s has finished' % self.worker_id)
         self.__is_end = value
 
@@ -235,9 +239,6 @@ class Agent(Greenlet):
 
     def __bool__(self):
         return self.is_end
-
-    def set_end_signal(self):
-        self.__end_signal.set(1)
 
     def get_end_signal(self):
         return self.__end_signal.get(block=True)

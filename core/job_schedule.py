@@ -88,7 +88,7 @@ class PBS(ABSClusterManager):
 
     def __init__(self, agent):
         super(PBS, self).__init__(agent)
-        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
+        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-APP').get_logger('PBS')
 
     def create_cmd(self):
         """
@@ -125,7 +125,7 @@ class PBS(ABSClusterManager):
         if self.cmd_data is None:
             self.cmd_data = self.create_cmd()
         if self.submit_times == 11:
-            self.logger.error('PBS: %s -- delivery failed')
+            self.logger.error('PBS: %s -- delivery failed' % self.agent.worker_id)
             return None
 
         output = os.popen('qsub %s' % self.cmd_data)
@@ -178,7 +178,7 @@ class NOHUP(ABSClusterManager):
 
     def __init__(self, agent):
         super(NOHUP, self).__init__(agent)
-        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-SERVER').get_logger('PBS')
+        self.logger = TaskLogger(self.agent.master.work_dir, 'MAIN-APP').get_logger('NOHUP')
 
     def create_cmd(self):
         """
@@ -213,7 +213,7 @@ class NOHUP(ABSClusterManager):
         output = os.popen(self.cmd_data)
         self.submit_times += 1
         text = output.read()
-        self.agent.master.logger.debug('NOHUP Process ID:' + text.strip())
+        self.logger.debug('NOHUP: submitted successfully, Process ID:' + text.strip())
         self.id = int(text.strip())
         return self.id
 
@@ -224,6 +224,7 @@ class NOHUP(ABSClusterManager):
         :return: None
         """
         os.system('kill -9 %s' % self.id)
+        self.logger.debug('kill worker: %s, worker: %s' % (self.id, self.agent.worker_id))
 
     def check_state(self):
         """

@@ -61,7 +61,8 @@ class MSGManager(Thread):
                     'hostname': self.hostname,
                     'worker_pid': self.pid
                 }
-                client.send(msg, status=self.__cmd_obj.status)
+                action = client.send(msg, status=self.__cmd_obj.status)
+                print('receive server data --> %s' % action)
             if self.__cmd_obj.status in ('end', 'error'):
                 break
             time.sleep(15)
